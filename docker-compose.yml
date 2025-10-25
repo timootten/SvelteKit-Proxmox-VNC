@@ -1,0 +1,37 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: websockify-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - websockify-net
+    restart: unless-stopped
+
+  websockify:
+    build: .
+    container_name: websockify
+    ports:
+      - '6080:6080'
+      - '443:443'
+    volumes:
+      - websockify-data:/data
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      - redis
+    networks:
+      - websockify-net
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  websockify-data:
+
+networks:
+  websockify-net:
+    driver: bridge

@@ -1,17 +1,28 @@
 import { query } from "$app/server";
 import { PROXMOX_ID, PROXMOX_SECRET, PROXMOX_URL } from "$env/static/private";
 import { tryCatch } from "$lib/utils";
+import Redis from "ioredis";
 
-const NODE = "Node01";
-const VMID = "251";
+interface VNCProxyResponse {
+  port: number;
+  ticket: string;
+  upid: string;
+  user: string;
+  password: string;
+  cert?: string;
+}
 
-const getVNCUrl = async () => {
+
+const redis = new Redis();
+
+
+const createNoVNC = async (node: string, vmid: number): Promise<{ url: string }> => {
   const proxmoxUrl = PROXMOX_URL;
   const proxmoxId = PROXMOX_ID;
   const proxmoxSecret = PROXMOX_SECRET;
 
   const response = await fetch(
-    `${proxmoxUrl}/api2/json/nodes/${NODE}/qemu/${VMID}/vncproxy`,
+    `${proxmoxUrl}/api2/json/nodes/${node}/qemu/${vmid}/vncproxy`,
     {
       method: 'POST',
       headers: {
@@ -19,45 +30,37 @@ const getVNCUrl = async () => {
         'Content-Type': 'application/x-www-form-urlencoded'
       },
       body: new URLSearchParams({
-        websocket: '1'
+        websocket: '1',
+        'generate-password': '1'
       })
     }
   );
 
   if (!response.ok) {
-    const errorText = await response.text();
-    console.error('Proxmox API error:', response.status, errorText);
-    throw new Error('Failed to fetch VNC proxy', { cause: response });
+    throw new Error(`Proxmox API error: ${response.status} ${response.statusText}`);
   }
 
-  const data = await response.json();
-  const { ticket, port } = data.data;
+  const data: VNCProxyResponse = (await response.json()).data;
 
-  // Build WebSocket URL path (without protocol/host)
-  const wsPath = `/api/vnc/${VMID}?ticket=${encodeURIComponent(ticket)}&port=${port}`;
+  redis.set('abc', `${"45.82.120.237"}:${data.port}`)
 
-  // Build noVNC viewer URL
-  const novncUrl = new URL('https://novnc.com/noVNC/vnc.html');
-  novncUrl.searchParams.set('host', 'l5173.shadehost.eu');
-  novncUrl.searchParams.set('port', '443'); // HTTPS port
-  novncUrl.searchParams.set('path', wsPath);
-  novncUrl.searchParams.set('autoconnect', 'true');
-  novncUrl.searchParams.set('resize', 'scale');
-  novncUrl.searchParams.set('password', ticket);
+  const vncURL = `http://localhost:6080/vnc.html?autoconnect=true&path=websockify?token=abc&password=${encodeURIComponent(data.password)}`
+
+
 
   return {
-    url: novncUrl.toString()
+    url: vncURL
   };
 };
 
 export const getVNCURL = query(async () => {
-  const [vnc, error] = await tryCatch(getVNCUrl());
+  const [vnc, error] = await tryCatch(createNoVNC("Node01", 251));
 
   if (error) {
-    console.error('Error fetching VNC URL:', error);
+    console.error('Error creating noVNC connection:', error);
     return {
       url: null,
-      error: error.message
+      error: error instanceof Error ? error.message : 'Unknown error'
     };
   }
 
